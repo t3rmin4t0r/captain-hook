@@ -5,13 +5,11 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Queue;
 import java.util.Set;
-import java.util.TreeSet;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -20,8 +18,6 @@ import org.apache.hadoop.hive.ql.exec.FunctionRegistry;
 import org.apache.hadoop.hive.ql.exec.Operator;
 import org.apache.hadoop.hive.ql.exec.TableScanOperator;
 import org.apache.hadoop.hive.ql.exec.Task;
-import org.apache.hadoop.hive.ql.lib.Node;
-import org.apache.hadoop.hive.ql.parse.ASTNode;
 import org.apache.hadoop.hive.ql.parse.AbstractSemanticAnalyzerHook;
 import org.apache.hadoop.hive.ql.parse.HiveSemanticAnalyzerHookContext;
 import org.apache.hadoop.hive.ql.parse.SemanticException;
@@ -38,21 +34,11 @@ import org.apache.hadoop.hive.ql.udf.generic.GenericUDFIn;
 import org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPAnd;
 import org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPEqual;
 import org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPOr;
-import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
-import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorConverters;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category;
-import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorConverters.Converter;
-import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory;
-import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
-import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector.PrimitiveCategory;
 import org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo;
-import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
-import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils;
-import org.datanucleus.store.rdbms.sql.expression.ExpressionUtils;
 
 import com.google.common.base.Preconditions;
-import com.google.common.collect.Lists;
 
 public class AndOrRewriteHook extends AbstractSemanticAnalyzerHook {
 	protected static final Log LOG = LogFactory.getLog(AndOrRewriteHook.class
@@ -143,15 +129,25 @@ public class AndOrRewriteHook extends AbstractSemanticAnalyzerHook {
 			LOG.info(" Turns out " + first + " is non-deterministic. Exiting");
 		}
 
-		final List<ExprNodeDesc> subexpr;
+		final ExprNodeDesc subexpr;
 
 		if (first instanceof GenericUDFOPAnd) {
 			subexpr = decomposeAndPredicates(any);
 		} else {
 			subexpr = null;
 		}
-
 		ExprNodeDesc finalPredicate = balanceAnyPredicates(any);
+
+		if (subexpr != null) {
+			GenericUDFOPAnd and = new GenericUDFOPAnd();
+			List<ExprNodeDesc> expressions = new ArrayList<ExprNodeDesc>(2);
+			expressions.add(subexpr);
+			expressions.add(finalPredicate);
+			finalPredicate = new ExprNodeGenericFuncDesc(
+					TypeInfoFactory.booleanTypeInfo, and, expressions);
+			LOG.info("Adding a new subexpr " + subexpr.getExprString());
+		}
+
 		fil.getConf().setPredicate(finalPredicate);
 	}
 
@@ -214,8 +210,10 @@ public class AndOrRewriteHook extends AbstractSemanticAnalyzerHook {
 
 		public void add(ExprNodeConstantDesc cons) {
 			items++;
-			LOG.info(column + " += " + cons.getExprString()
-					+ String.format(" [%d items, ndv %d]", items, cost()));
+			/*
+			 * LOG.info(column + " += " + cons.getExprString() +
+			 * String.format(" [%d items, ndv %d]", items, cost()));
+			 */
 			constants.add(new ExprNodeDescEqualityWrapper(cons));
 		}
 
@@ -237,7 +235,7 @@ public class AndOrRewriteHook extends AbstractSemanticAnalyzerHook {
 		}
 	}
 
-	private List<ExprNodeDesc> decomposeAndPredicates(List<ExprNodeDesc> any) {
+	private ExprNodeDesc decomposeAndPredicates(List<ExprNodeDesc> any) {
 		DefaultHashMap<ExprNodeDescEqualityWrapper, AndRange> expr = new DefaultHashMap<ExprNodeDescEqualityWrapper, AndRange>() {
 			@Override
 			public AndRange defaultValue(ExprNodeDescEqualityWrapper wrap) {
@@ -297,8 +295,8 @@ public class AndOrRewriteHook extends AbstractSemanticAnalyzerHook {
 			if (subExpr.cost() < 1024) {
 				subExprs.add(subExpr);
 			}
-			LOG.info("GOPAL: " + subExpr.column + " has a cost of "
-					+ subExpr.cost() + " and " + subExpr.items);
+			LOG.info("GOPAL: " + subExpr.column + " has an Ndv of "
+					+ subExpr.cost() + " occuring " + subExpr.items + " times");
 		}
 
 		if (subExprs.isEmpty()) {
@@ -318,11 +316,12 @@ public class AndOrRewriteHook extends AbstractSemanticAnalyzerHook {
 			}
 		});
 
+		List<ExprNodeDesc> decomposed = new ArrayList<ExprNodeDesc>(
+				subExprs.size());
 		for (AndRange subExpr : subExprs) {
-			LOG.info("Partial expression for pull up "
-					+ subExpr.getExpr().getExprString());
+			decomposed.add(subExpr.getExpr());
 		}
 
-		return null;
+		return balanceAllPredicates(decomposed);
 	}
 }
