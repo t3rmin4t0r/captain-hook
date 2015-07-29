@@ -292,7 +292,7 @@ public class AndOrRewriteHook extends AbstractSemanticAnalyzerHook {
 
 		ArrayList<AndRange> subExprs = new ArrayList<AndRange>();
 		for (AndRange subExpr : expr.values()) {
-			if (subExpr.cost() < 1024) {
+			if (subExpr.cost() < 4096) {
 				subExprs.add(subExpr);
 			}
 			LOG.info("GOPAL: " + subExpr.column + " has an Ndv of "
