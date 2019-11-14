@@ -7,7 +7,7 @@
   <name>captain-hook</name>
 
   <properties>
-    <hive.version>1.0.0</hive.version>
+    <hive.version>2.3.4</hive.version>
 	<hadoop.version>2.7.0</hadoop.version>
   </properties>
 
